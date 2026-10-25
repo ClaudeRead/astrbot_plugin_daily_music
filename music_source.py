@@ -8,6 +8,7 @@
 公开 API 均为网页端接口，无需凭据；汽水音乐无公开 API，用配置歌名列表或自定义接口。
 """
 
+import asyncio
 import base64
 import random
 import re
@@ -208,22 +209,32 @@ class QQSource(BaseSource):
         return ((data.get("data") or {}).get("song") or {}).get("list") or []
 
     async def _search_musicu(self) -> list:
-        data = await fetch_json(
-            "https://u.y.qq.com/cgi-bin/musicu.fcg",
-            payload={
-                "music.search.SearchCgiService": {
-                    "method": "DoSearchForQQMusicDesktop",
-                    "module": "music.search.SearchCgiService",
-                    "param": {
-                        "search_type": 0, "query": self.keywords,
-                        "page_num": 1, "num_per_page": 30,
-                    },
-                }
-            },
-            headers=QQ_HEADERS,
-        )
-        body = ((data.get("music.search.SearchCgiService") or {}).get("data") or {}).get("body") or {}
-        return (body.get("song") or {}).get("list") or []
+        # 该接口有按 IP 的频控（code=2001），空结果时短暂等待重试一次
+        for attempt in range(2):
+            data = await fetch_json(
+                "https://u.y.qq.com/cgi-bin/musicu.fcg",
+                payload={
+                    "music.search.SearchCgiService": {
+                        "method": "DoSearchForQQMusicDesktop",
+                        "module": "music.search.SearchCgiService",
+                        "param": {
+                            "search_type": 0, "query": self.keywords,
+                            "page_num": 1, "num_per_page": 30,
+                        },
+                    }
+                },
+                headers=QQ_HEADERS,
+            )
+            svc = data.get("music.search.SearchCgiService") or {}
+            body = (svc.get("data") or {}).get("body") or {}
+            songs = (body.get("song") or {}).get("list") or []
+            if songs:
+                return songs
+            code = svc.get("code")
+            if attempt == 0 and code:
+                logger.warning(f"[每日一听] QQ音乐 musicu.fcg 返回 code={code}，3 秒后重试")
+                await asyncio.sleep(3)
+        raise RuntimeError(f"musicu.fcg 无结果（code={code}），可能触发频控")
 
     async def decorate(self, track: Track) -> None:
         if not track.song_id:

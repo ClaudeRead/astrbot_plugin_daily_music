@@ -2,7 +2,7 @@ name: astrbot_plugin_daily_music
 display_name: 每日一听
 short_desc: Bot 每日自主听歌（网易云/QQ音乐/汽水），生成听歌感受并存入 LivingMemory 长期记忆。
 desc: 让 Bot 每天按计划"自己去听歌"：支持网易云、QQ音乐（歌单 ID 或关键词搜索）与汽水音乐（自定义歌名列表/接口）；听歌数量、每首时长、歌单内容均可配置；听完后由大模型为每首歌写一句听后感，连同记忆写入 astrbot_plugin_livingmemory 插件（未安装时回退存本地）。
-version: v1.0.2
+version: v1.0.3
 author: ReadPond
 repo: https://github.com/ClaudeRead/astrbot_plugin_daily_music
 astrbot_version: ">=4.29.0,<5"
