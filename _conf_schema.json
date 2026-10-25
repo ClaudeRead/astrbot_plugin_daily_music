@@ -1,0 +1,189 @@
+{
+  "schedule": {
+    "description": "定时听歌",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "启用每日定时听歌",
+        "type": "bool",
+        "default": true
+      },
+      "time": {
+        "description": "每天触发时间（HH:MM）",
+        "type": "string",
+        "default": "21:00",
+        "hint": "24 小时制，例如 21:00"
+      },
+      "timezone": {
+        "description": "时区",
+        "type": "string",
+        "default": "Asia/Shanghai",
+        "hint": "容器多为 UTC，默认按北京时间触发"
+      }
+    }
+  },
+  "listen": {
+    "description": "听歌行为",
+    "type": "object",
+    "items": {
+      "songs_per_day": {
+        "description": "每天听几首歌",
+        "type": "int",
+        "default": 3,
+        "slider": {"min": 1, "max": 10, "step": 1}
+      },
+      "listen_seconds": {
+        "description": "每首歌听多久（秒）",
+        "type": "int",
+        "default": 180,
+        "hint": "写入听歌记录与感受生成情境，不阻塞 Bot 运行"
+      },
+      "platforms": {
+        "description": "听歌顺序（轮流派歌）",
+        "type": "list",
+        "default": ["netease", "qq", "qishui"],
+        "options": ["netease", "qq", "qishui"],
+        "labels": ["网易云", "QQ音乐", "汽水音乐"],
+        "hint": "实际可用还要求对应平台配置了歌曲来源"
+      },
+      "realtime_delay": {
+        "description": "模拟真实听歌节奏",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后每首歌之间最多等待 15 秒，模拟真实听歌过程（默认关闭以快速完成）"
+      },
+      "history_size": {
+        "description": "去重历史容量",
+        "type": "int",
+        "default": 200,
+        "hint": "近期听过的歌不再重复选入"
+      }
+    }
+  },
+  "netease": {
+    "description": "网易云来源",
+    "type": "object",
+    "items": {
+      "playlist_id": {
+        "description": "歌单 ID",
+        "type": "string",
+        "default": "",
+        "hint": "网页版歌单链接中的 id 数字，如 3778678；留空则用关键词搜索"
+      },
+      "keywords": {
+        "description": "搜索关键词",
+        "type": "string",
+        "default": "华语 流行 治愈",
+        "hint": "未配置歌单 ID 时生效，从搜索结果中随机选歌"
+      }
+    }
+  },
+  "qq": {
+    "description": "QQ音乐来源",
+    "type": "object",
+    "items": {
+      "playlist_id": {
+        "description": "歌单 ID",
+        "type": "string",
+        "default": "",
+        "hint": "网页版歌单链接 disstid 后的数字；留空则用关键词搜索"
+      },
+      "keywords": {
+        "description": "搜索关键词",
+        "type": "string",
+        "default": "热门 华语",
+        "hint": "未配置歌单 ID 时生效"
+      }
+    }
+  },
+  "qishui": {
+    "description": "汽水音乐来源（无公开 API）",
+    "type": "object",
+    "items": {
+      "song_list": {
+        "description": "歌名列表",
+        "type": "text",
+        "default": "",
+        "hint": "每行一首，格式「歌名 - 歌手」，如：起风了 - 买辣椒也用券"
+      },
+      "api_url": {
+        "description": "自定义接口地址",
+        "type": "string",
+        "default": "",
+        "hint": "可选。返回 JSON 的 HTTP(S) 接口，格式 {\"songs\":[{\"name\":\"...\",\"artist\":\"...\"}]}，仅允许公网地址"
+      }
+    }
+  },
+  "llm": {
+    "description": "听后感生成",
+    "type": "object",
+    "items": {
+      "provider_id": {
+        "description": "大模型提供商 ID",
+        "type": "string",
+        "default": "",
+        "hint": "留空使用 AstrBot 全局默认提供商"
+      },
+      "model": {
+        "description": "模型名",
+        "type": "string",
+        "default": "",
+        "hint": "留空使用提供商默认模型"
+      },
+      "feeling_max_chars": {
+        "description": "每句听后感字数上限",
+        "type": "int",
+        "default": 50,
+        "hint": "越短越省 token"
+      },
+      "persona": {
+        "description": "Bot 的性格补充设定",
+        "type": "text",
+        "default": "",
+        "hint": "会拼进固定提示词前缀，修改会影响缓存命中，非必要不改动"
+      }
+    }
+  },
+  "memory": {
+    "description": "记忆写入（LivingMemory）",
+    "type": "object",
+    "items": {
+      "enable": {
+        "description": "把听歌记忆与感受写入 LivingMemory",
+        "type": "bool",
+        "default": true,
+        "hint": "未安装 astrbot_plugin_livingmemory 时自动回退保存到插件数据目录"
+      },
+      "importance": {
+        "description": "记忆重要性",
+        "type": "float",
+        "default": 0.6,
+        "slider": {"min": 0, "max": 1, "step": 0.05}
+      },
+      "topics": {
+        "description": "记忆话题标签",
+        "type": "string",
+        "default": "听歌,音乐",
+        "hint": "逗号分隔，平台名会自动追加"
+      },
+      "scope": {
+        "description": "记忆作用域",
+        "type": "string",
+        "default": "livingmemory:global",
+        "hint": "livingmemory:global 为全局；也可填具体会话 unified_msg_origin，让该会话的对话能召回这些记忆"
+      }
+    }
+  },
+  "notify": {
+    "description": "结果通知",
+    "type": "object",
+    "items": {
+      "sessions": {
+        "description": "通知会话列表",
+        "type": "list",
+        "default": [],
+        "hint": "定时听歌完成后推送结果摘要的会话 unified_msg_origin；可在会话里发「/listen 推送」快速添加"
+      }
+    }
+  }
+}
