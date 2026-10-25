@@ -95,7 +95,16 @@ class FeelingGenerator:
     async def _chat(self, prompt: str) -> str:
         llm_cfg = self.config.get("llm", {}) or {}
         model = str(llm_cfg.get("model") or "").strip() or None
-        resp = await self._resolve_provider().text_chat(prompt=prompt, model=model)
+        provider = self._resolve_provider()
+        try:
+            resp = await provider.text_chat(prompt=prompt, model=model)
+        except Exception as e:
+            # 指定的模型不属于该提供商（400 模型名错误）时，回退提供商默认模型再试一次
+            if model and "model" in str(e).lower():
+                logger.warning(f"[每日一听] 模型 {model} 调用失败，回退提供商默认模型: {e}")
+                resp = await provider.text_chat(prompt=prompt, model=None)
+            else:
+                raise
         text = resp.result_chain.get_plain_text() if resp.result_chain else ""
         if not text.strip():
             raise RuntimeError("模型返回了空内容")
