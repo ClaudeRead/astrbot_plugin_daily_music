@@ -119,16 +119,17 @@
     "type": "object",
     "items": {
       "provider_id": {
-        "description": "大模型提供商 ID",
+        "description": "大模型提供商",
         "type": "string",
         "default": "",
-        "hint": "留空使用 AstrBot 全局默认提供商"
+        "_special": "select_provider",
+        "hint": "从下拉列表里选择，留空则使用 AstrBot 全局默认提供商"
       },
       "model": {
-        "description": "模型名",
+        "description": "模型名（一般留空）",
         "type": "string",
         "default": "",
-        "hint": "留空使用提供商默认模型"
+        "hint": "留空即使用所选提供商自己的默认模型（推荐）。只有需要在该提供商下指定子模型时才填，填错会触发 400"
       },
       "feeling_max_chars": {
         "description": "每句听后感字数上限",

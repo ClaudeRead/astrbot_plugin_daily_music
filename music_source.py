@@ -209,8 +209,10 @@ class QQSource(BaseSource):
         return ((data.get("data") or {}).get("song") or {}).get("list") or []
 
     async def _search_musicu(self) -> list:
-        # 该接口有按 IP 的频控（code=2001），空结果时短暂等待重试一次
-        for attempt in range(2):
+        # 该接口有按 IP 的频控（code=2001），空结果时逐次加大等待再试
+        for attempt, wait in enumerate((0, 3, 8)):
+            if wait:
+                await asyncio.sleep(wait)
             data = await fetch_json(
                 "https://u.y.qq.com/cgi-bin/musicu.fcg",
                 payload={
@@ -231,9 +233,8 @@ class QQSource(BaseSource):
             if songs:
                 return songs
             code = svc.get("code")
-            if attempt == 0 and code:
-                logger.warning(f"[每日一听] QQ音乐 musicu.fcg 返回 code={code}，3 秒后重试")
-                await asyncio.sleep(3)
+            if code:
+                logger.warning(f"[每日一听] QQ音乐 musicu.fcg 返回 code={code}，稍后重试")
         raise RuntimeError(f"musicu.fcg 无结果（code={code}），可能触发频控")
 
     async def decorate(self, track: Track) -> None:

@@ -1,9 +1,11 @@
 """听歌感受生成：单次 LLM 调用批量产出全部歌曲的听后感。
 
-Token 优化（最高原则）：
-    - 固定提示词前缀 + 动态歌单后缀：前缀不变以命中供应商端 prompt 缓存
+缓存优先（本插件的最高原则）：
+    - 固定的系统提示词逐字不变，作为供应商端可缓存的稳定前缀
+    - 会变的内容（歌单、字数限制、性格设定）一律放在用户消息里，永远排在稳定前缀之后
+    - 因此改 persona / feeling_max_chars 不会让缓存整体失效，只会让尾部未命中
     - 每天所有歌曲合并为一次调用，输出紧凑 JSON，避免逐首歌调用
-    - 解析失败只重试一次，重试提示词复用同一次歌单内容
+    - 解析失败只重试一次，重试只在用户消息尾部追加提示，系统前缀保持不变
 """
 
 import json
@@ -13,27 +15,27 @@ from astrbot.api import logger
 
 VALID_SENTIMENTS = {"positive", "neutral", "negative"}
 
-# 固定前缀： persona 为空时整段不变，缓存命中率最高
+# 稳定前缀：这段文字不要随插件配置变化，否则每次改动都会让供应商端的缓存整体失效。
 SYSTEM_PROMPT = (
     "你是一个热爱音乐的AI伙伴，正在执行「每日一听」计划：按歌单听了几首歌，"
     "请为每首歌写一句真实自然的听后感。要求：\n"
     "1. 第一人称，像随手记下的心情，有画面感，禁止空洞套话\n"
-    "2. 每句不超过 {max_chars} 字\n"
+    "2. 每句字数不超过用户消息中给出的限制\n"
     "3. 只输出 JSON 数组，格式："
     '[{"index":1,"feeling":"...","sentiment":"positive"}]，'
     "index 对应歌曲序号，sentiment 只能是 positive、neutral 或 negative，"
-    "不要输出任何其他内容\n"
+    "不要输出任何其他内容"
 )
 
 RETRY_SUFFIX = "\n\n上一次输出无法解析，请严格只输出符合格式的 JSON 数组。"
 
 
-def build_prompt(tracks: list, listen_seconds: int, max_chars: int, persona: str) -> str:
-    """组装完整提示词：固定前缀在前，歌单数据在后。"""
-    head = SYSTEM_PROMPT.replace("{max_chars}", str(max_chars))
+def build_user_prompt(tracks: list, listen_seconds: int, max_chars: int, persona: str) -> str:
+    """组装用户消息：所有可变内容都在这里，按「先限制、后数据」排列。"""
+    lines = [f"【输出限制】每句不超过 {max_chars} 字。"]
     if persona.strip():
-        head += f"你的性格设定：{persona.strip()}\n"
-    lines = [head, "【今日听歌记录】"]
+        lines.append(f"【性格设定】{persona.strip()}")
+    lines.append("【今日听歌记录】")
     for i, t in enumerate(tracks, 1):
         parts = [f"{i}.[{t.platform_name}]《{t.name}》-{t.artist}"]
         if t.album:
@@ -92,17 +94,25 @@ class FeelingGenerator:
             raise RuntimeError("AstrBot 尚未配置任何大模型服务提供商")
         return provider
 
-    async def _chat(self, prompt: str) -> str:
+    async def _chat(self, system_prompt: str, user_prompt: str) -> str:
         llm_cfg = self.config.get("llm", {}) or {}
         model = str(llm_cfg.get("model") or "").strip() or None
         provider = self._resolve_provider()
         try:
-            resp = await provider.text_chat(prompt=prompt, model=model)
+            resp = await provider.text_chat(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                model=model,
+            )
         except Exception as e:
-            # 指定的模型不属于该提供商（400 模型名错误）时，回退提供商默认模型再试一次
+            # 手填的模型名不属于该提供商（400 模型名错误）时，回退提供商默认模型再试一次
             if model and "model" in str(e).lower():
                 logger.warning(f"[每日一听] 模型 {model} 调用失败，回退提供商默认模型: {e}")
-                resp = await provider.text_chat(prompt=prompt, model=None)
+                resp = await provider.text_chat(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    model=None,
+                )
             else:
                 raise
         text = resp.result_chain.get_plain_text() if resp.result_chain else ""
@@ -115,11 +125,12 @@ class FeelingGenerator:
         llm_cfg = self.config.get("llm", {}) or {}
         max_chars = max(10, int(llm_cfg.get("feeling_max_chars", 50) or 50))
         persona = str(llm_cfg.get("persona") or "")
-        prompt = build_prompt(tracks, listen_seconds, max_chars, persona)
+        user_prompt = build_user_prompt(tracks, listen_seconds, max_chars, persona)
         for attempt in range(2):
+            prompt = user_prompt + RETRY_SUFFIX if attempt else user_prompt
             try:
                 return parse_feelings(
-                    await self._chat(prompt + RETRY_SUFFIX if attempt else prompt),
+                    await self._chat(SYSTEM_PROMPT, prompt),
                     len(tracks),
                     max_chars,
                 )
