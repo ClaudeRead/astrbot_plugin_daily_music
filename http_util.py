@@ -44,12 +44,18 @@ async def validate_url(url: str) -> None:
             raise ValueError(f"目标主机解析到受限网段：{parsed.hostname}")
 
 
-async def fetch_json(url: str, params: dict | None = None, headers: dict | None = None):
-    """GET 请求并解析 JSON；禁用重定向以免绕过主机校验。"""
+async def fetch_json(url: str, params: dict | None = None, headers: dict | None = None,
+                     payload: dict | None = None):
+    """请求并解析 JSON：payload 非 None 时 POST JSON，否则 GET；禁用重定向以免绕过主机校验。"""
     await validate_url(url)
     async with aiohttp.ClientSession(
         timeout=TIMEOUT, headers={**HEADERS, **(headers or {})}
     ) as session:
-        async with session.get(url, params=params, allow_redirects=False) as resp:
+        kwargs = {"params": params, "allow_redirects": False}
+        if payload is not None:
+            async with session.post(url, json=payload, **kwargs) as resp:
+                resp.raise_for_status()
+                return await resp.json(content_type=None)
+        async with session.get(url, **kwargs) as resp:
             resp.raise_for_status()
             return await resp.json(content_type=None)

@@ -167,13 +167,14 @@ class QQSource(BaseSource):
     display = "QQ音乐"
 
     def _to_track(self, s: dict) -> Track:
-        mid = str(s.get("songmid") or "")
+        mid = str(s.get("songmid") or s.get("mid") or "")
+        album = s.get("albumname") or (s.get("album") or {}).get("name") or ""
         return Track(
             platform=self.key,
             platform_name=self.display,
-            name=str(s.get("songname") or ""),
+            name=str(s.get("songname") or s.get("name") or ""),
             artist=(s.get("singer") or [{}])[0].get("name") or "",
-            album=s.get("albumname") or "",
+            album=album,
             url=f"https://y.qq.com/n/ryqq/songDetail/{mid}" if mid else "",
             song_id=mid,
         )
@@ -190,13 +191,39 @@ class QQSource(BaseSource):
             )
             raw = ((data.get("cdlist") or [{}])[0]).get("songlist") or []
         else:
-            data = await fetch_json(
-                "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
-                params={"w": self.keywords, "format": "json", "n": 30},
-                headers=QQ_HEADERS,
-            )
-            raw = ((data.get("data") or {}).get("song") or {}).get("list") or []
+            try:
+                raw = await self._search_legacy()
+            except Exception as e:
+                # 旧搜索接口对部分关键词会 500，回退到 musicu.fcg 新接口
+                logger.warning(f"[每日一听] QQ音乐旧搜索接口失败（{e}），改用 musicu.fcg")
+                raw = await self._search_musicu()
         return [t for t in (self._to_track(s) for s in raw) if t.name]
+
+    async def _search_legacy(self) -> list:
+        data = await fetch_json(
+            "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
+            params={"w": self.keywords, "format": "json", "n": 30},
+            headers=QQ_HEADERS,
+        )
+        return ((data.get("data") or {}).get("song") or {}).get("list") or []
+
+    async def _search_musicu(self) -> list:
+        data = await fetch_json(
+            "https://u.y.qq.com/cgi-bin/musicu.fcg",
+            payload={
+                "music.search.SearchCgiService": {
+                    "method": "DoSearchForQQMusicDesktop",
+                    "module": "music.search.SearchCgiService",
+                    "param": {
+                        "search_type": 0, "query": self.keywords,
+                        "page_num": 1, "num_per_page": 30,
+                    },
+                }
+            },
+            headers=QQ_HEADERS,
+        )
+        body = ((data.get("music.search.SearchCgiService") or {}).get("data") or {}).get("body") or {}
+        return (body.get("song") or {}).get("list") or []
 
     async def decorate(self, track: Track) -> None:
         if not track.song_id:

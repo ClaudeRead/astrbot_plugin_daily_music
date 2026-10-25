@@ -15,6 +15,7 @@
 
 import asyncio
 import json
+import random
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -166,13 +167,18 @@ class DailyMusicPlugin(Star):
             pretty_date = f"{now.year}年{now.month}月{now.day}日 {WEEKDAYS[now.weekday()]}"
             lines = [f"🎧 每日一听 · {pretty_date}"]
 
-            # 1. 选歌：三平台轮流派歌，凑满数量
+            # 1. 选歌：三平台轮流派歌，凑满数量；某平台失败时由其他平台补位
             picked = []  # [(source, track)]
             for i in range(songs_per_day):
-                source = sources[i % len(sources)]
-                track = await source.pick(set(history))
-                if track:
-                    picked.append((source, track))
+                order = dict.fromkeys(
+                    [sources[i % len(sources)]] + list(sources)
+                )  # 首选平台失败后按随机顺序补位，去重保持首选优先
+                for source in order:
+                    track = await source.pick(set(history))
+                    if track:
+                        picked.append((source, track))
+                        history.append(track.key)  # 同一轮内也去重
+                        break
             if not picked:
                 return "\n".join(lines + ["❌ 今天没选到可听的歌曲，请检查各平台来源配置"])
 
