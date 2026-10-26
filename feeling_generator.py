@@ -2,7 +2,7 @@
 
 缓存优先（本插件的最高原则）：
     - 固定的系统提示词逐字不变，作为供应商端可缓存的稳定前缀
-    - 会变的内容（歌单、字数限制、性格设定）一律放在用户消息里，永远排在稳定前缀之后
+    - 会变的内容（歌单、字数限制、性格、当下心情）一律放在用户消息里，永远排在稳定前缀之后
     - 因此改 persona / feeling_max_chars 不会让缓存整体失效，只会让尾部未命中
     - 每天所有歌曲合并为一次调用，输出紧凑 JSON，避免逐首歌调用
     - 解析失败只重试一次，重试只在用户消息尾部追加提示，系统前缀保持不变
@@ -12,6 +12,8 @@ import json
 import re
 
 from astrbot.api import logger
+
+from .llm_client import chat_text
 
 VALID_SENTIMENTS = {"positive", "neutral", "negative"}
 
@@ -30,11 +32,14 @@ SYSTEM_PROMPT = (
 RETRY_SUFFIX = "\n\n上一次输出无法解析，请严格只输出符合格式的 JSON 数组。"
 
 
-def build_user_prompt(tracks: list, listen_seconds: int, max_chars: int, persona: str) -> str:
+def build_user_prompt(tracks: list, listen_seconds: int, max_chars: int,
+                      persona: str, vibe: str = "") -> str:
     """组装用户消息：所有可变内容都在这里，按「先限制、后数据」排列。"""
     lines = [f"【输出限制】每句不超过 {max_chars} 字。"]
-    if persona.strip():
-        lines.append(f"【性格设定】{persona.strip()}")
+    if str(persona or "").strip():
+        lines.append(f"【性格设定】{str(persona).strip()}")
+    if str(vibe or "").strip():
+        lines.append(f"【当下心情】{str(vibe).strip()}")
     lines.append("【今日听歌记录】")
     for i, t in enumerate(tracks, 1):
         parts = [f"{i}.[{t.platform_name}]《{t.name}》-{t.artist}"]
@@ -53,7 +58,7 @@ def parse_feelings(text: str, count: int, max_chars: int) -> dict:
     start, end = text.find("["), text.rfind("]")
     if start == -1 or end <= start:
         raise ValueError("输出中找不到 JSON 数组")
-    items = json.loads(text[start : end + 1])
+    items = json.loads(text[start:end + 1])
     feelings = {}
     for item in items if isinstance(items, list) else []:
         if not isinstance(item, dict):
@@ -81,59 +86,17 @@ class FeelingGenerator:
         self.context = context
         self.config = config
 
-    def _resolve_provider(self):
-        llm_cfg = self.config.get("llm", {}) or {}
-        pid = str(llm_cfg.get("provider_id") or "").strip()
-        if pid:
-            provider = self.context.get_provider_by_id(pid)
-            if provider is None:
-                raise RuntimeError(f"未找到服务提供商「{pid}」，请检查插件配置")
-            return provider
-        provider = self.context.get_using_provider()
-        if provider is None:
-            raise RuntimeError("AstrBot 尚未配置任何大模型服务提供商")
-        return provider
-
-    async def _chat(self, system_prompt: str, user_prompt: str) -> str:
-        llm_cfg = self.config.get("llm", {}) or {}
-        model = str(llm_cfg.get("model") or "").strip() or None
-        provider = self._resolve_provider()
-        try:
-            resp = await provider.text_chat(
-                prompt=user_prompt,
-                system_prompt=system_prompt,
-                model=model,
-            )
-        except Exception as e:
-            # 手填的模型名不属于该提供商（400 模型名错误）时，回退提供商默认模型再试一次
-            if model and "model" in str(e).lower():
-                logger.warning(f"[每日一听] 模型 {model} 调用失败，回退提供商默认模型: {e}")
-                resp = await provider.text_chat(
-                    prompt=user_prompt,
-                    system_prompt=system_prompt,
-                    model=None,
-                )
-            else:
-                raise
-        text = resp.result_chain.get_plain_text() if resp.result_chain else ""
-        if not text.strip():
-            raise RuntimeError("模型返回了空内容")
-        return text
-
-    async def generate(self, tracks: list, listen_seconds: int) -> dict:
+    async def generate(self, tracks: list, listen_seconds: int, vibe: str = "") -> dict:
         """返回 {序号: (感受, 情绪)}；失败只记录日志，不抛出。"""
         llm_cfg = self.config.get("llm", {}) or {}
         max_chars = max(10, int(llm_cfg.get("feeling_max_chars", 50) or 50))
         persona = str(llm_cfg.get("persona") or "")
-        user_prompt = build_user_prompt(tracks, listen_seconds, max_chars, persona)
+        user_prompt = build_user_prompt(tracks, listen_seconds, max_chars, persona, vibe)
         for attempt in range(2):
             prompt = user_prompt + RETRY_SUFFIX if attempt else user_prompt
             try:
-                return parse_feelings(
-                    await self._chat(SYSTEM_PROMPT, prompt),
-                    len(tracks),
-                    max_chars,
-                )
+                text = await chat_text(self.context, self.config, SYSTEM_PROMPT, prompt)
+                return parse_feelings(text, len(tracks), max_chars)
             except Exception as e:
                 logger.warning(f"[每日一听] 听后感生成第 {attempt + 1} 次失败: {e}")
         return {}

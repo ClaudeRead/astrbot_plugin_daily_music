@@ -8,11 +8,17 @@
         "type": "bool",
         "default": true
       },
+      "windows": {
+        "description": "听歌时间段",
+        "type": "text",
+        "default": "13:00-14:00\n18:00-21:00",
+        "hint": "每行一个时间段，24 小时制，格式 13:00-14:00。每个时间段每天听一次，具体开始时刻在段内随机；可写多行，支持跨零点（如 23:00-01:00）"
+      },
       "time": {
-        "description": "每天触发时间（HH:MM）",
+        "description": "（旧版）单点触发时间",
         "type": "string",
-        "default": "21:00",
-        "hint": "24 小时制，例如 21:00"
+        "default": "",
+        "hint": "仅当「听歌时间段」留空时作为兼容项生效，届时长 1 小时的窗口；建议直接用上面的时间段"
       },
       "timezone": {
         "description": "时区",
@@ -26,25 +32,46 @@
     "description": "听歌行为",
     "type": "object",
     "items": {
+      "platforms": {
+        "description": "听歌平台（按顺序尝试）",
+        "type": "list",
+        "default": ["qishui"],
+        "options": ["qishui", "qq", "netease"],
+        "labels": ["汽水音乐", "QQ音乐", "网易云"],
+        "hint": "默认汽水音乐。每次只听其中一个平台：按列表顺序找歌，前一个平台没有可用歌曲时才换下一个"
+      },
+      "bot_choose": {
+        "description": "让 Bot 按人格自选歌单主题",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后由大模型根据「性格设定」和当前时段生成搜索关键词，再在选定平台找歌；关闭则只用下面各平台配置的关键词/歌单"
+      },
+      "mode": {
+        "description": "听歌量的计算方式",
+        "type": "string",
+        "default": "duration",
+        "options": ["duration", "count"],
+        "labels": ["按时长", "按首数"]
+      },
+      "duration_minutes": {
+        "description": "本次听多久（分钟）",
+        "type": "int",
+        "default": 5,
+        "slider": {"min": 3, "max": 60, "step": 1},
+        "hint": "「按时长」时生效：按每首约 3.5 分钟折算成要听的歌曲数量"
+      },
       "songs_per_day": {
-        "description": "每天听几首歌",
+        "description": "本次听几首",
         "type": "int",
         "default": 3,
-        "slider": {"min": 1, "max": 10, "step": 1}
+        "slider": {"min": 1, "max": 12, "step": 1},
+        "hint": "「按首数」时生效"
       },
       "listen_seconds": {
-        "description": "每首歌听多久（秒）",
+        "description": "每首歌记录听多久（秒）",
         "type": "int",
         "default": 180,
-        "hint": "写入听歌记录与感受生成情境，不阻塞 Bot 运行"
-      },
-      "platforms": {
-        "description": "听歌顺序（轮流派歌）",
-        "type": "list",
-        "default": ["netease", "qq", "qishui"],
-        "options": ["netease", "qq", "qishui"],
-        "labels": ["网易云", "QQ音乐", "汽水音乐"],
-        "hint": "实际可用还要求对应平台配置了歌曲来源"
+        "hint": "「按首数」时生效；写进听歌记录与听后感情境，不阻塞 Bot 运行"
       },
       "realtime_delay": {
         "description": "模拟真实听歌节奏",
@@ -68,13 +95,13 @@
         "description": "歌单 ID",
         "type": "string",
         "default": "",
-        "hint": "网页版歌单链接中的 id 数字，如 3778678；留空则用关键词搜索"
+        "hint": "网页版歌单链接中的 id 数字，如 3778678；留空则按 Bot 选的主题词搜索"
       },
       "keywords": {
-        "description": "搜索关键词",
+        "description": "搜索关键词（兜底）",
         "type": "string",
         "default": "华语 流行 治愈",
-        "hint": "未配置歌单 ID 时生效，从搜索结果中随机选歌"
+        "hint": "没有歌单 ID 且 Bot 主题词搜不到歌时使用"
       }
     }
   },
@@ -86,13 +113,13 @@
         "description": "歌单 ID",
         "type": "string",
         "default": "",
-        "hint": "网页版歌单链接 disstid 后的数字；留空则用关键词搜索"
+        "hint": "网页版歌单链接 disstid 后的数字；留空则按 Bot 选的主题词搜索"
       },
       "keywords": {
-        "description": "搜索关键词",
+        "description": "搜索关键词（兜底）",
         "type": "string",
         "default": "热门 华语",
-        "hint": "未配置歌单 ID 时生效"
+        "hint": "没有歌单 ID 且 Bot 主题词搜不到歌时使用"
       }
     }
   },
@@ -104,18 +131,18 @@
         "description": "歌名列表",
         "type": "text",
         "default": "",
-        "hint": "每行一首，格式「歌名 - 歌手」，如：起风了 - 买辣椒也用券"
+        "hint": "每行一首，格式「歌名 - 歌手」，如：起风了 - 买辣椒也用券。Bot 选的主题词会在这里做宽松过滤，没命中就听整个列表"
       },
       "api_url": {
         "description": "自定义接口地址",
         "type": "string",
         "default": "",
-        "hint": "可选。返回 JSON 的 HTTP(S) 接口，格式 {\"songs\":[{\"name\":\"...\",\"artist\":\"...\"}]}，仅允许公网地址"
+        "hint": "可选。返回 JSON 的 HTTP(S) 接口，格式 {\"songs\":[{\"name\":\"...\",\"artist\":\"...\"}]}，仅允许公网地址；可用 {keyword} 占位，会被替换成 Bot 选的主题词"
       }
     }
   },
   "llm": {
-    "description": "听后感生成",
+    "description": "大模型",
     "type": "object",
     "items": {
       "provider_id": {
@@ -138,10 +165,10 @@
         "hint": "越短越省 token"
       },
       "persona": {
-        "description": "Bot 的性格补充设定",
+        "description": "Bot 的性格设定",
         "type": "text",
         "default": "",
-        "hint": "会拼进固定提示词前缀，修改会影响缓存命中，非必要不改动"
+        "hint": "用于自选歌单主题、写听后感。会放在用户消息里而不是固定前缀，改它不会让提示词缓存整体失效"
       }
     }
   },
@@ -150,7 +177,7 @@
     "type": "object",
     "items": {
       "enable": {
-        "description": "把听歌记忆与感受写入 LivingMemory",
+        "description": "把听歌记录与感受写入 LivingMemory",
         "type": "bool",
         "default": true,
         "hint": "未安装 astrbot_plugin_livingmemory 时自动回退保存到插件数据目录"
@@ -165,7 +192,7 @@
         "description": "记忆话题标签",
         "type": "string",
         "default": "听歌,音乐",
-        "hint": "逗号分隔，平台名会自动追加"
+        "hint": "逗号分隔，平台名与当日主题词会自动追加"
       },
       "scope": {
         "description": "记忆作用域",

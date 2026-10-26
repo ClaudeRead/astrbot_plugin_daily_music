@@ -1,16 +1,16 @@
 """音乐来源：网易云 / QQ音乐 / 汽水音乐。
 
 统一接口（便于二次开发接入新平台）：
-    enabled()                 是否配置了可用来源
-    list_tracks() -> [Track]  拉取候选歌曲（歌单优先，否则关键词搜索）
-    decorate(track)           选歌后补充信息（如歌词摘句），失败不影响流程
+    enabled()                     是否配置了可用来源
+    candidates(keyword) -> [Track] 一次请求拿到候选歌曲（歌单优先，否则按关键词搜索）
+    decorate(track)               选歌后补充信息（如歌词摘句），失败不影响流程
 
+keyword 由 mood.py 按 Bot 人格生成；为空时回退到插件配置里的关键词/歌单。
 公开 API 均为网页端接口，无需凭据；汽水音乐无公开 API，用配置歌名列表或自定义接口。
 """
 
 import asyncio
 import base64
-import random
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -76,31 +76,27 @@ class BaseSource(ABC):
     def enabled(self) -> bool:
         return bool(self.playlist_id or self.keywords)
 
+    def search_term(self, keyword: str) -> str:
+        """搜索词：Bot 选的主题优先，否则用配置的关键词。"""
+        return str(keyword or "").strip() or self.keywords
+
     @abstractmethod
-    async def list_tracks(self) -> list:
+    async def list_tracks(self, keyword: str = "") -> list:
         """拉取候选歌曲列表，异常向上抛。"""
 
     async def decorate(self, track: Track) -> None:
         """选歌后补充信息，默认无操作。"""
 
-    async def pick(self, history: set) -> Track | None:
-        """从候选中随机选一首（优先避开近期听过的）。"""
+    async def candidates(self, keyword: str = "") -> list:
+        """拉一次候选（网络请求只有这一次）；失败返回空列表，不影响其它平台。"""
         try:
-            tracks = await self.list_tracks()
+            tracks = await self.list_tracks(keyword)
         except Exception as e:
             logger.warning(f"[每日一听] {self.display} 获取歌曲失败: {e}")
-            return None
+            return []
         if not tracks:
             logger.warning(f"[每日一听] {self.display} 没有可用歌曲，请检查来源配置")
-            return None
-        fresh = [t for t in tracks if t.key not in history]
-        pool = fresh or tracks
-        track = random.choice(pool)
-        try:
-            await self.decorate(track)
-        except Exception as e:
-            logger.debug(f"[每日一听] {self.display} 补全信息失败: {e}")
-        return track
+        return tracks
 
 
 class NeteaseSource(BaseSource):
@@ -109,7 +105,7 @@ class NeteaseSource(BaseSource):
     key = "netease"
     display = "网易云"
 
-    async def list_tracks(self) -> list:
+    async def list_tracks(self, keyword: str = "") -> list:
         if self.playlist_id:
             data = await fetch_json(
                 "https://music.163.com/api/playlist/detail",
@@ -132,7 +128,7 @@ class NeteaseSource(BaseSource):
             ]
         data = await fetch_json(
             "https://music.163.com/api/search/get/web",
-            params={"s": self.keywords, "type": 1, "limit": 30},
+            params={"s": self.search_term(keyword), "type": 1, "limit": 30},
             headers=NETEASE_HEADERS,
         )
         raw = (data.get("result") or {}).get("songs") or []
@@ -180,7 +176,7 @@ class QQSource(BaseSource):
             song_id=mid,
         )
 
-    async def list_tracks(self) -> list:
+    async def list_tracks(self, keyword: str = "") -> list:
         if self.playlist_id:
             data = await fetch_json(
                 "https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg",
@@ -192,23 +188,24 @@ class QQSource(BaseSource):
             )
             raw = ((data.get("cdlist") or [{}])[0]).get("songlist") or []
         else:
+            term = self.search_term(keyword)
             try:
-                raw = await self._search_legacy()
+                raw = await self._search_legacy(term)
             except Exception as e:
                 # 旧搜索接口对部分关键词会 500，回退到 musicu.fcg 新接口
                 logger.warning(f"[每日一听] QQ音乐旧搜索接口失败（{e}），改用 musicu.fcg")
-                raw = await self._search_musicu()
+                raw = await self._search_musicu(term)
         return [t for t in (self._to_track(s) for s in raw) if t.name]
 
-    async def _search_legacy(self) -> list:
+    async def _search_legacy(self, term: str) -> list:
         data = await fetch_json(
             "https://c.y.qq.com/soso/fcgi-bin/client_search_cp",
-            params={"w": self.keywords, "format": "json", "n": 30},
+            params={"w": term, "format": "json", "n": 30},
             headers=QQ_HEADERS,
         )
         return ((data.get("data") or {}).get("song") or {}).get("list") or []
 
-    async def _search_musicu(self) -> list:
+    async def _search_musicu(self, term: str) -> list:
         # 该接口有按 IP 的频控（code=2001），空结果时逐次加大等待再试
         for attempt, wait in enumerate((0, 3, 8)):
             if wait:
@@ -220,7 +217,7 @@ class QQSource(BaseSource):
                         "method": "DoSearchForQQMusicDesktop",
                         "module": "music.search.SearchCgiService",
                         "param": {
-                            "search_type": 0, "query": self.keywords,
+                            "search_type": 0, "query": term,
                             "page_num": 1, "num_per_page": 30,
                         },
                     }
@@ -264,13 +261,14 @@ class QishuiSource(BaseSource):
     def enabled(self) -> bool:
         return bool(self.api_url or self.song_list.strip())
 
-    async def list_tracks(self) -> list:
+    async def list_tracks(self, keyword: str = "") -> list:
         if self.api_url:
+            url = self.api_url.replace("{keyword}", str(keyword or "").strip())
             try:
-                return self._from_api(await fetch_json(self.api_url))
+                return self._from_api(await fetch_json(url))
             except Exception as e:
                 logger.warning(f"[每日一听] 汽水自定义接口失败，回退歌名列表: {e}")
-        return self._from_text()
+        return self._from_text(keyword)
 
     @staticmethod
     def _from_api(data) -> list:
@@ -286,7 +284,7 @@ class QishuiSource(BaseSource):
             if isinstance(t, dict) and t.get("name")
         ]
 
-    def _from_text(self) -> list:
+    def _from_text(self, keyword: str = "") -> list:
         tracks = []
         for line in self.song_list.splitlines():
             line = line.strip()
@@ -301,7 +299,12 @@ class QishuiSource(BaseSource):
                     artist=artist.strip() or "未知歌手",
                 )
             )
-        return tracks
+        # 汽水没有公开搜索接口：按主题词做宽松过滤（任意字命中即保留），全不命中则全留
+        term = str(keyword or "").strip()
+        if not term:
+            return tracks
+        hits = [t for t in tracks if any(ch in f"{t.name}{t.artist}" for ch in term)]
+        return hits or tracks
 
 
 SOURCE_CLASSES = (NeteaseSource, QQSource, QishuiSource)
