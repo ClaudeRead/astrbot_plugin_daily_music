@@ -112,7 +112,8 @@ class NeteaseSource(BaseSource):
                 params={"id": self.playlist_id},
                 headers=NETEASE_HEADERS,
             )
-            raw = (data.get("playlist") or {}).get("tracks") or []
+            playlist = data.get("result") or data.get("playlist") or {}
+            raw = playlist.get("tracks") or []
             return [
                 Track(
                     platform=self.key,

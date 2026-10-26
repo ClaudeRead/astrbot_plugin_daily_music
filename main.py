@@ -33,6 +33,7 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, StarTools
 from astrbot.core.message.components import Plain
 
+from . import share
 from . import windows
 from .feeling_generator import FeelingGenerator
 from .living_memory import get_lmem, save_memory
@@ -192,6 +193,117 @@ class DailyMusicPlugin(Star):
             yield event.plain_result(self._toggle_notify(event.unified_msg_origin))
         else:
             yield event.plain_result(await self._run_listen())
+
+    @filter.command("share", alias={"分享"})
+    async def share(self, event: AstrMessageEvent):
+        """主动分享一首歌/歌单链接"""
+        yield event.plain_result(await self._share_random())
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_all_message(self, event: AstrMessageEvent):
+        """识别私聊/群聊里发给 Bot 的音乐链接，去听后按人格给出评价。
+
+        非链接消息不产出回复，也不阻止事件，让 AstrBot 主流程/LLM 正常处理。
+        """
+        text = str(getattr(event, "message_str", "") or "").strip()
+        if not text or text.startswith("/") or self._is_self_message(event):
+            return
+        link = share.parse_share_link(text)
+        if link is None:
+            return
+        reply = await self._handle_share(link)
+        if reply:
+            yield event.plain_result(reply)
+            event.stop_event()  # 阻止 LLM 对这条链接重复回复
+
+    # ------------------------------------------------------------------
+    # 分享
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_self_message(event) -> bool:
+        """判断是否为 Bot 自己发出的消息，避免回声触发自我回复。"""
+        try:
+            msg = getattr(event, "message_obj", None)
+            sender = getattr(msg, "sender", None)
+            sender_id = str(getattr(sender, "user_id", "") or "")
+            self_id = str(getattr(msg, "self_id", "") or "")
+            return bool(sender_id) and sender_id == self_id
+        except Exception:
+            return False
+
+    async def _handle_share(self, link) -> str:
+        """处理识别到的音乐链接：解析详情 → 生成评价 → 组装回复。"""
+        if link.platform == "qishui":
+            return (
+                "🎧 我识别到这是汽水音乐（抖音）的分享链接，但汽水音乐没有公开的歌曲信息接口，"
+                "我暂时查不到具体是哪首歌。\n你可以把「歌名 - 歌手」一起发我，我马上去听一听给你评价～"
+            )
+        try:
+            tracks = await share.resolve_tracks(link)
+        except Exception as e:
+            logger.warning(f"[每日一听] 解析分享链接失败: {e}")
+            return "❌ [每日一听] 没能解析这个链接的歌曲信息，请确认链接可访问后重试。"
+        if not tracks:
+            return "❌ [每日一听] 这个链接里没找到歌曲信息（可能已失效或版权受限）。"
+
+        kind_label = "歌单" if link.kind == "playlist" else "歌曲"
+        heading = "【朋友分享的歌单】" if link.kind == "playlist" else "【朋友分享的歌曲】"
+        try:
+            feelings = await self.generator.generate(
+                tracks, share.SHARE_LISTEN_SECONDS, "", heading=heading
+            )
+        except Exception as e:
+            logger.error(f"[每日一听] 分享评价生成失败: {e}")
+            feelings = {}
+
+        lines = [f"🎧 收到你分享的{kind_label}，我来听一听～"]
+        for idx, track in enumerate(tracks, 1):
+            feeling = feelings.get(idx, ("", "neutral"))[0]
+            desc = f"《{track.name}》-{track.artist}"
+            if track.album:
+                desc += f"（专辑《{track.album}》）"
+            if feeling:
+                desc += f"：{feeling}"
+            lines.append(f"{idx}. [{track.platform_name}] {desc}")
+        if link.kind == "playlist" and len(tracks) >= share.MAX_SHARE_TRACKS:
+            lines.append(f"（歌单很长，我只听了其中 {len(tracks)} 首～）")
+        return "\n".join(lines)
+
+    async def _share_random(self) -> str:
+        """主动分享：配置了歌单的平台直接分享歌单链接，否则随机挑一首带链接的歌。"""
+        sources = build_sources(self.config)
+        if not sources:
+            return "❌ [每日一听] 没有可用的音乐来源，请先在插件配置里填歌单/关键词/歌名列表。"
+        source = random.choice(sources)
+        if getattr(source, "playlist_id", ""):
+            url = share.playlist_url(source.key, source.playlist_id)
+            if url:
+                return f"🎵 [每日一听] 分享一个 {source.display} 歌单给你：\n🔗 {url}"
+        candidates = await source.candidates("")
+        if not candidates:
+            return f"❌ [每日一听] 从 {source.display} 没找到可分享的歌，请检查来源配置。"
+        track = random.choice(candidates)
+        try:
+            await source.decorate(track)
+        except Exception as e:
+            logger.debug(f"[每日一听] {source.display} 补全歌词失败: {e}")
+        review = ""
+        try:
+            feelings = await self.generator.generate(
+                [track], share.SHARE_LISTEN_SECONDS, "", heading="【准备分享的歌】"
+            )
+            review = feelings.get(1, ("", "neutral"))[0]
+        except Exception as e:
+            logger.warning(f"[每日一听] 分享推荐语生成失败: {e}")
+        lines = [f"🎵 [每日一听] 分享一首歌给你：", f"《{track.name}》- {track.artist}"]
+        if track.album:
+            lines.append(f"专辑《{track.album}》")
+        if review:
+            lines.append(review)
+        if track.url:
+            lines.append(f"🔗 {track.url}")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # 核心流程

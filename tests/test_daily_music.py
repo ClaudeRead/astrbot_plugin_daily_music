@@ -33,12 +33,19 @@ def _install_stubs():
         class PermissionType:
             ADMIN = "admin"
 
+        class EventMessageType:
+            ALL = "all"
+
         @staticmethod
         def command(*a, **k):
             return lambda fn: fn
 
         @staticmethod
         def permission_type(*a, **k):
+            return lambda fn: fn
+
+        @staticmethod
+        def event_message_type(*a, **k):
             return lambda fn: fn
 
     event.filter = _Filter()
@@ -120,6 +127,7 @@ _install_stubs()
 _install_pkg()
 
 from dm import windows  # noqa: E402
+from dm import share  # noqa: E402
 from dm.feeling_generator import (  # noqa: E402
     SYSTEM_PROMPT as FEELING_SYSTEM, build_user_prompt, parse_feelings,
 )
@@ -187,6 +195,10 @@ p2 = build_user_prompt(tracks, 150, 50, "文艺")
 check("无心情时不输出该行", "【当下心情】" not in p2, p2)
 check("听后感提示词含歌单", "《晴天》-周杰伦" in p1 and "歌词摘句「故事的小黄花」" in p1 and "听了150秒" in p1)
 check("听后感系统提示词静态", "{max_chars}" not in FEELING_SYSTEM and "{persona}" not in FEELING_SYSTEM)
+p3 = build_user_prompt(tracks, 150, 50, "文艺", heading="【朋友分享的歌单】")
+check("听后感提示词支持自定义标题", "【朋友分享的歌单】" in p3 and "【今日听歌记录】" not in p3, p3)
+p4 = build_user_prompt(tracks, 150, 50, "文艺")
+check("听后感提示词默认标题", "【今日听歌记录】" in p4, p4)
 
 feel = parse_feelings('[{"index":1,"feeling":"像午后","sentiment":"Positive"},{"index":3,"feeling":"越界"}]', 2, 50)
 check("情绪值归一化", feel[1] == ("像午后", "positive"), str(feel))
@@ -243,6 +255,20 @@ import asyncio  # noqa: E402
 hist = ["qishui:一直很安静:迷梦小羊"]
 check("听过的不再听", asyncio.run(_run_collect(hist, False)) == [])
 check("歌单听遍后重播保底", len(asyncio.run(_run_collect(hist, True))) == 1)
+
+# ---------------------------------------------------------------- 分享链接识别
+link = share.parse_share_link("听听这首 https://music.163.com/song?id=347230 咋样")
+check("网易云单曲链接", link is not None and link.platform == "netease" and link.kind == "song" and link.sid == "347230", str(link))
+link = share.parse_share_link("https://music.163.com/#/playlist?id=3778678")
+check("网易云歌单链接", link is not None and link.platform == "netease" and link.kind == "playlist" and link.sid == "3778678", str(link))
+link = share.parse_share_link("https://y.qq.com/n/ryqq/songDetail/0039MnYb0qxYhV")
+check("QQ单曲链接", link is not None and link.platform == "qq" and link.kind == "song" and link.sid == "0039MnYb0qxYhV", str(link))
+link = share.parse_share_link("https://y.qq.com/n/ryqq/playlist/123456")
+check("QQ歌单链接", link is not None and link.platform == "qq" and link.kind == "playlist" and link.sid == "123456", str(link))
+link = share.parse_share_link("https://soda.douyin.com/abcdef")
+check("汽水链接", link is not None and link.platform == "qishui", str(link))
+check("无链接返回 None", share.parse_share_link("今天天气不错") is None)
+check("歌单链接生成", share.playlist_url("netease", "3778678") == "https://music.163.com/playlist?id=3778678")
 
 # ---------------------------------------------------------------- 结果
 failed = [c for c in checks if not c[1]]

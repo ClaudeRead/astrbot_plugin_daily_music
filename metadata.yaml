@@ -1,8 +1,8 @@
 name: astrbot_plugin_daily_music
 display_name: 每日一听
-short_desc: Bot 在设定时间段自主听歌（汽水/QQ音乐/网易云），按人格挑歌单、写听后感并存入 LivingMemory。
-desc: 让 Bot 每天在用户设定的时间段（默认 13:00-14:00、18:00-21:00）里"自己去听歌"：按自己的性格设定挑一个歌单主题，到指定平台（默认汽水音乐，支持 QQ音乐、网易云）找歌听，按时长（默认 5 分钟）或首数（默认 3 首）计算听歌量；听完由大模型为每首歌写一句听后感，连同听歌记录写入 astrbot_plugin_livingmemory（未安装时回退存本地）。
-version: v2.0.0
+short_desc: Bot 在设定时间段自主听歌（汽水/QQ音乐/网易云），按人格挑歌单、写听后感并存入 LivingMemory；支持识别歌曲/歌单链接给评价与主动分享。
+desc: 让 Bot 每天在用户设定的时间段（默认 13:00-14:00、18:00-21:00）里"自己去听歌"：按自己的性格设定挑一个歌单主题，到指定平台（默认汽水音乐，支持 QQ音乐、网易云）找歌听，按时长（默认 5 分钟）或首数（默认 3 首）计算听歌量；听完由大模型为每首歌写一句听后感，连同听歌记录写入 astrbot_plugin_livingmemory（未安装时回退存本地）。此外，Bot 会识别私聊/群聊里发给它的歌曲或歌单链接（QQ音乐、网易云；汽水音乐因无公开接口仅识别并提示），自己去听后按人格给评价；也可用「/分享」主动分享歌曲/歌单链接。
+version: v2.1.0
 author: ReadPond
 repo: https://github.com/ClaudeRead/astrbot_plugin_daily_music
 astrbot_version: ">=4.29.0,<5"

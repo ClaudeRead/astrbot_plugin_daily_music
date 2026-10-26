@@ -33,14 +33,14 @@ RETRY_SUFFIX = "\n\n上一次输出无法解析，请严格只输出符合格式
 
 
 def build_user_prompt(tracks: list, listen_seconds: int, max_chars: int,
-                      persona: str, vibe: str = "") -> str:
+                      persona: str, vibe: str = "", heading: str = "【今日听歌记录】") -> str:
     """组装用户消息：所有可变内容都在这里，按「先限制、后数据」排列。"""
     lines = [f"【输出限制】每句不超过 {max_chars} 字。"]
     if str(persona or "").strip():
         lines.append(f"【性格设定】{str(persona).strip()}")
     if str(vibe or "").strip():
         lines.append(f"【当下心情】{str(vibe).strip()}")
-    lines.append("【今日听歌记录】")
+    lines.append(heading)
     for i, t in enumerate(tracks, 1):
         parts = [f"{i}.[{t.platform_name}]《{t.name}》-{t.artist}"]
         if t.album:
@@ -86,12 +86,13 @@ class FeelingGenerator:
         self.context = context
         self.config = config
 
-    async def generate(self, tracks: list, listen_seconds: int, vibe: str = "") -> dict:
+    async def generate(self, tracks: list, listen_seconds: int, vibe: str = "",
+                       heading: str = "【今日听歌记录】") -> dict:
         """返回 {序号: (感受, 情绪)}；失败只记录日志，不抛出。"""
         llm_cfg = self.config.get("llm", {}) or {}
         max_chars = max(10, int(llm_cfg.get("feeling_max_chars", 50) or 50))
         persona = str(llm_cfg.get("persona") or "")
-        user_prompt = build_user_prompt(tracks, listen_seconds, max_chars, persona, vibe)
+        user_prompt = build_user_prompt(tracks, listen_seconds, max_chars, persona, vibe, heading)
         for attempt in range(2):
             prompt = user_prompt + RETRY_SUFFIX if attempt else user_prompt
             try:
